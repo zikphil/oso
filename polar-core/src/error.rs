@@ -400,7 +400,9 @@ pub enum ValidationError {
         // redeclaration.
     },
     SingletonVariable {
-        loc: usize,
+        /// Term where the error arose, tracked for lexical context.
+        term: Term,
+        /// Variable name.
         name: String,
     },
 }

@@ -136,13 +136,11 @@ impl KnowledgeBase {
                             })
                         })?;
                     if !found_match {
-                        return Err(self.set_error_context(
-                            &rule.body,
-                            error::ValidationError::InvalidRule {
-                                rule: rule.to_polar(),
-                                msg,
-                            },
-                        ));
+                        return Err(error::ValidationError::InvalidRule {
+                            rule: Rule::clone(rule),
+                            msg,
+                        }
+                        .into());
                     }
                 }
             }
@@ -578,6 +576,16 @@ impl KnowledgeBase {
         }
         self.sources.add_source(source, src_id);
         Ok(src_id)
+    }
+
+    pub fn get_source_for_term(&self, term: &Term) -> Option<Source> {
+        term.get_source_id()
+            .and_then(|id| self.sources.get_source(id))
+    }
+
+    pub fn get_source_for_rule(&self, rule: &Rule) -> Option<Source> {
+        rule.get_source_id()
+            .and_then(|id| self.sources.get_source(id))
     }
 
     pub fn clear_rules(&mut self) {

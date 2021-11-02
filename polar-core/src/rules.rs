@@ -77,6 +77,22 @@ impl Rule {
             },
         }
     }
+
+    pub fn get_source_id(&self) -> Option<u64> {
+        if let SourceInfo::Parser { src_id, .. } = self.source_info {
+            Some(src_id)
+        } else {
+            None
+        }
+    }
+
+    pub fn offset(&self) -> usize {
+        if let SourceInfo::Parser { left, .. } = self.source_info {
+            left
+        } else {
+            0
+        }
+    }
 }
 
 // TODO: should this be a Set of Rules? Do we currently check for duplicate rules?

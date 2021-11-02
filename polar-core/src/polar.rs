@@ -1,8 +1,8 @@
-use crate::error::{ErrorKind, ValidationError};
+use std::sync::{Arc, RwLock};
 
 use super::data_filtering::{build_filter_plan, FilterPlan, PartialResults, Types};
 use super::diagnostic::Diagnostic;
-use super::error::PolarResult;
+use super::error::{ErrorContext, ErrorKind, PolarResult, ValidationError};
 use super::events::*;
 use super::kb::*;
 use super::messages::*;
@@ -17,8 +17,6 @@ use super::validations::{
     check_singletons,
 };
 use super::vm::*;
-
-use std::sync::{Arc, RwLock};
 
 pub struct Query {
     runnable_stack: Vec<(Box<dyn Runnable>, u64)>, // Tuple of Runnable + call_id.
@@ -198,9 +196,9 @@ impl Polar {
                     }
                     parser::Line::RuleType(rule_type) => {
                         // make sure rule_type doesn't have anything that needs to be rewritten in the head
-                        let rule_type = rewrite_rule(rule_type, kb);
+                        let rewritten = rewrite_rule(rule_type.clone(), kb);
                         if !matches!(
-                            rule_type.body.value(),
+                            rewritten.body.value(),
                             Value::Expression(
                                 Operation {
                                     operator: Operator::And,
@@ -208,15 +206,15 @@ impl Polar {
                                 }
                             ) if args.is_empty()
                         ) {
-                            diagnostics.push(Diagnostic::Error(kb.set_error_context(
-                                &rule_type.body,
+                            diagnostics.push(Diagnostic::Error(
                                 error::ValidationError::InvalidRuleType {
-                                    rule_type: rule_type.to_polar(),
-                                    msg: "\nRule types cannot contain dot lookups.".to_owned(),
-                                },
-                            )));
+                                    rule: rule_type,
+                                    msg: "Rule types cannot contain dot lookups.".to_owned(),
+                                }
+                                .into(),
+                            ));
                         } else {
-                            kb.add_rule_type(rule_type);
+                            kb.add_rule_type(rewritten);
                         }
                     }
                     parser::Line::ResourceBlock {
@@ -255,7 +253,7 @@ impl Polar {
                 .collect(),
         );
 
-        // Attach context to ResourceBlock and SingletonVariable errors.
+        // Attach context to *most* validation errors.
         //
         // TODO(gj): can we attach context to *all* errors here since all errors will be parse-time
         // errors and so will have some source context to attach?
@@ -265,9 +263,35 @@ impl Polar {
                 match e.kind {
                     Validation(ResourceBlock { ref term, .. })
                     | Validation(SingletonVariable { ref term, .. }) => {
-                        *e = kb.set_error_context(term, e.clone());
+                        // TODO(gj): keeping this here for now since I don't love any of the
+                        // existing APIs for attaching context.
+                        let source = kb.get_source_for_term(term).unwrap();
+                        let (row, column) = crate::lexer::loc_to_pos(&source.src, term.offset());
+                        e.context.replace(ErrorContext {
+                            source,
+                            row,
+                            column,
+                            include_location: false,
+                        });
                     }
-                    _ => (),
+                    Validation(InvalidRuleType { ref rule, .. }) => {
+                        let source = kb.get_source_for_rule(rule).unwrap();
+                        let (row, column) = crate::lexer::loc_to_pos(&source.src, rule.offset());
+                        e.context.replace(ErrorContext {
+                            source,
+                            row,
+                            column,
+                            include_location: false,
+                        });
+                    }
+                    Validation(ref e) => panic!("Unexpected error: {:?}", e),
+                    ErrorKind::Runtime(error::RuntimeError::FileLoading { .. }) => (),
+                    ErrorKind::Parse(ref e) => match e {
+                        error::ParseError::UnrecognizedToken { .. }
+                        | error::ParseError::ReservedWord { .. } => (),
+                        e => panic!("Unexpected error: {:?}", e),
+                    },
+                    ref e => panic!("Unexpected error: {:?}", e),
                 }
             }
         }
@@ -297,6 +321,39 @@ impl Polar {
         if let Some(w) = check_resource_blocks_missing_has_permission(&kb) {
             diagnostics.push(w)
         };
+
+        // Attach context to *remaining* validation errors.
+        //
+        // TODO(gj): can we attach context to *all* errors here since all errors will be parse-time
+        // errors and so will have some source context to attach?
+        for diagnostic in &mut diagnostics {
+            if let Diagnostic::Error(e) = diagnostic {
+                use {ErrorKind::Validation, ValidationError::*};
+                match e.kind {
+                    Validation(UndefinedRule { ref term, .. }) => {
+                        let source = kb.get_source_for_term(term).unwrap();
+                        let (row, column) = crate::lexer::loc_to_pos(&source.src, term.offset());
+                        e.context.replace(ErrorContext {
+                            source,
+                            row,
+                            column,
+                            include_location: false,
+                        });
+                    }
+                    Validation(InvalidRule { ref rule, .. }) => {
+                        let source = kb.get_source_for_rule(rule).unwrap();
+                        let (row, column) = crate::lexer::loc_to_pos(&source.src, rule.offset());
+                        e.context.replace(ErrorContext {
+                            source,
+                            row,
+                            column,
+                            include_location: false,
+                        });
+                    }
+                    ref e => panic!("Unexpected error: {:?}", e),
+                }
+            }
+        }
 
         // If we've encountered any errors, clear the KB.
         if diagnostics.iter().any(Diagnostic::is_error) {
@@ -496,7 +553,7 @@ mod tests {
         let next = diagnostics.next().unwrap();
         assert!(matches!(next, Diagnostic::Error(_)));
         assert!(
-            next.to_string().starts_with("Call to undefined rule \"g\""),
+            next.to_string().starts_with("Call to undefined rule: g()"),
             "{}",
             next
         );

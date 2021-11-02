@@ -2,8 +2,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::sources::*;
-use crate::terms::*;
+use super::{rules::Rule, sources::*, terms::*};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(into = "FormattedPolarError")]
@@ -66,6 +65,10 @@ impl PolarError {
                 }
                 _ => {}
             },
+            (ErrorKind::Validation(e), _, _) => panic!(
+                "PolarError::set_context shouldn't be called for validation errors: {:?}",
+                e
+            ),
             (e, Some(source), Some(term)) => {
                 let (row, column) = crate::lexer::loc_to_pos(&source.src, term.offset());
                 self.context.replace(ErrorContext {
@@ -380,15 +383,18 @@ impl fmt::Display for OperationalError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ValidationError {
     InvalidRule {
-        rule: String,
+        /// Rule where the error arose, tracked for lexical context.
+        rule: Rule,
         msg: String,
     },
     InvalidRuleType {
-        rule_type: String,
+        /// Rule where the error arose, tracked for lexical context.
+        rule: Rule,
         msg: String,
     },
     UndefinedRule {
-        rule_name: String,
+        /// Term where the error arose, tracked for lexical context.
+        term: Term,
     },
     ResourceBlock {
         /// Term where the error arose, tracked for lexical context.
@@ -411,13 +417,13 @@ impl fmt::Display for ValidationError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Self::InvalidRule { rule, msg } => {
-                write!(f, "Invalid rule: {} {}", rule, msg)
+                write!(f, "Invalid rule: {} {}", rule.to_polar(), msg)
             }
-            Self::InvalidRuleType { rule_type, msg } => {
-                write!(f, "Invalid rule type: {} {}", rule_type, msg)
+            Self::InvalidRuleType { rule, msg } => {
+                write!(f, "Invalid rule type: {}\n{}", rule.to_polar(), msg)
             }
-            Self::UndefinedRule { rule_name } => {
-                write!(f, r#"Call to undefined rule "{}""#, rule_name)
+            Self::UndefinedRule { term } => {
+                write!(f, "Call to undefined rule: {}", term.to_polar())
             }
             Self::ResourceBlock { msg, .. } => {
                 write!(f, "{}", msg)

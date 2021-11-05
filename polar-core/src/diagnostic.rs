@@ -2,11 +2,12 @@ use std::fmt;
 
 use super::error::PolarError;
 use super::kb::KnowledgeBase;
+use super::warning::Warning;
 
 #[derive(Debug)]
 pub enum Diagnostic {
     Error(PolarError),
-    Warning(String),
+    Warning(Warning),
 }
 
 impl Diagnostic {

@@ -1,3 +1,8 @@
+// TODO(gj): Display impl should stringify the primary message but not add the lexical context (at
+// column X of line Y in file Z) or source context (line of source code in which the error arose w/
+// a caret pointing to the offending characters). Those should be added on the way out to
+// polar-{c,wasm}-api.
+
 use std::fmt;
 
 use super::error::PolarError;
